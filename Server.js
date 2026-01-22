@@ -81,6 +81,31 @@ async function start() {
                 return res.status(400).json({ error: "userId is required" });
             }
 
+            // 🔹 1. Проверяем: игрок УЖЕ в матче?
+            const existingMatchId = await mmRedis.get(`mm:user:match:${userId}`);
+            if (existingMatchId) {
+                const matchRaw = await mmRedis.get(existingMatchId);
+
+                if (matchRaw) {
+                    const match = JSON.parse(matchRaw);
+
+                    return res.json({
+                        status: "waiting_for_game_server",
+                        match: {
+                            id: match.id,
+                            players: match.players.map(p => ({
+                                userId: p.userId,
+                                username: p.username,
+                            })),
+                        },
+                    });
+                } else {
+                    // если матч удалён, чистим ссылку
+                    await mmRedis.del(`mm:user:match:${userId}`);
+                }
+            }
+
+            // 🔹 2. Проверяем: игрок вообще в очереди?
             const metaRaw = await mmRedis.get(`mm:queue:meta:${userId}`);
             if (!metaRaw) {
                 return res.json({ status: "not_in_queue" });
@@ -96,6 +121,7 @@ async function start() {
             const minRating = meta.rating - range;
             const maxRating = meta.rating + range;
 
+            // 🔹 3. Ищем кандидатов
             const candidates = await mmRedis.zRangeByScore(
                 "mm:queue:rating",
                 minRating,
@@ -111,11 +137,12 @@ async function start() {
                     range,
                 });
             }
-            
 
+            // 🔹 4. Пытаемся забрать соперника из очереди
             const removed = await mmRedis.zRem("mm:queue:rating", opponentId);
 
             if (removed === 0) {
+                // кто-то уже забрал этого соперника
                 return res.json({
                     status: "searching",
                     waitTime,
@@ -123,10 +150,12 @@ async function start() {
                 });
             }
 
+            // 🔹 5. Убираем и себя из очереди
             await mmRedis.zRem("mm:queue:rating", userId);
             await mmRedis.del(`mm:queue:meta:${userId}`);
             await mmRedis.del(`mm:queue:meta:${opponentId}`);
 
+            // 🔹 6. Загружаем игроков
             const p1 = JSON.parse(await usersRedis.get(`user:${userId}`));
             const p2 = JSON.parse(await usersRedis.get(`user:${opponentId}`));
 
@@ -154,8 +183,14 @@ async function start() {
                 status: "waiting_for_game_server",
             };
 
-            await mmRedis.set(matchId, JSON.stringify(match));
+            // 🔹 7. Сохраняем матч
+            await mmRedis.set(matchId, JSON.stringify(match), { EX: 300 });
 
+            // 🔹 8. Привязываем ОБОИХ игроков к матчу
+            await mmRedis.set(`mm:user:match:${userId}`, matchId, { EX: 300 });
+            await mmRedis.set(`mm:user:match:${opponentId}`, matchId, { EX: 300 });
+
+            // 🔹 9. Возвращаем матч ТЕКУЩЕМУ игроку
             return res.json({
                 status: "waiting_for_game_server",
                 match: {
@@ -172,6 +207,7 @@ async function start() {
             res.status(500).json({ error: "Internal server error" });
         }
     });
+
 
     const PORT = process.env.PORT || 3000;
 
