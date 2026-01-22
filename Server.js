@@ -4,7 +4,6 @@ const { createClient } = require("redis");
 const app = express();
 app.use(express.json());
 
-// 🟢 Redis БАЗА ПОЛЬЗОВАТЕЛЕЙ
 const usersRedis = createClient({
     socket: {
         host: "redis-17419.c328.europe-west3-1.gce.cloud.redislabs.com",
@@ -13,7 +12,6 @@ const usersRedis = createClient({
     password: "af0gO9r23iS9w7sYd8T0XtQktQR0ZXnl",
 });
 
-// 🔵 Redis БАЗА МАТЧМЕЙКИНГА
 const mmRedis = createClient({
     username: "default",
     password: "67zcdHUvuYYp23FZ4vDSDmQKJIyelSNf",
@@ -30,10 +28,9 @@ async function start() {
     await usersRedis.connect();
     await mmRedis.connect();
 
-    console.log("✅ Connected to Users Redis");
-    console.log("✅ Connected to Matchmaking Redis");
-
-    // 🎯 1️⃣ ENQUEUE — игрок встал в очередь
+    console.log(" Connected to Users Redis");
+    console.log(" Connected to Matchmaking Redis");
+    
     app.post("/matchmaking/enqueue", async (req, res) => {
         try {
             const { userId } = req.body;
@@ -41,8 +38,7 @@ async function start() {
             if (!userId) {
                 return res.status(400).json({ error: "userId is required" });
             }
-
-            // Берём профиль из users DB
+            
             const userRaw = await usersRedis.get(`user:${userId}`);
             if (!userRaw) {
                 return res.status(404).json({ error: "User not found" });
@@ -50,7 +46,6 @@ async function start() {
 
             const user = JSON.parse(userRaw);
 
-            // Проверяем, не стоит ли уже в очереди
             const exists = await mmRedis.zScore("mm:queue:rating", userId);
             if (exists !== null) {
                 return res.json({ status: "already_in_queue" });
@@ -58,7 +53,6 @@ async function start() {
 
             const now = Date.now();
 
-            // Сохраняем мета (joinedAt + rating)
             await mmRedis.set(
                 `mm:queue:meta:${userId}`,
                 JSON.stringify({
@@ -67,7 +61,6 @@ async function start() {
                 })
             );
 
-            // Добавляем в рейтинг-очередь
             await mmRedis.zAdd("mm:queue:rating", [
                 { score: user.rating, value: userId },
             ]);
@@ -79,7 +72,7 @@ async function start() {
         }
     });
 
-    // 🎯 2️⃣ CHECK — игрок каждые 10 сек проверяет очередь
+
     app.post("/matchmaking/check", async (req, res) => {
         try {
             const { userId } = req.body;
@@ -88,7 +81,6 @@ async function start() {
                 return res.status(400).json({ error: "userId is required" });
             }
 
-            // Берём мету текущего игрока
             const metaRaw = await mmRedis.get(`mm:queue:meta:${userId}`);
             if (!metaRaw) {
                 return res.json({ status: "not_in_queue" });
@@ -98,21 +90,18 @@ async function start() {
 
             const waitTime = Date.now() - meta.joinedAt;
 
-            // каждые 10 сек +100 рейтинга, максимум 1000
             const step = Math.floor(waitTime / 10000);
             const range = Math.min(step * 100, 1000);
 
             const minRating = meta.rating - range;
             const maxRating = meta.rating + range;
 
-            // 🔥 БЕРЁМ ТОЛЬКО ИЗ ОЧЕРЕДИ
             const candidates = await mmRedis.zRangeByScore(
                 "mm:queue:rating",
                 minRating,
                 maxRating
             );
 
-            // убираем самого себя
             const opponentId = candidates.find(id => id !== userId);
 
             if (!opponentId) {
@@ -122,13 +111,11 @@ async function start() {
                     range,
                 });
             }
-
-            // 🔥 КРИТИЧЕСКИЙ МОМЕНТ — АТОМАРНО ПРОВЕРЯЕМ, ЧТО СОПЕРНИК ВСЁ ЕЩЁ В ОЧЕРЕДИ
+            
 
             const removed = await mmRedis.zRem("mm:queue:rating", opponentId);
 
             if (removed === 0) {
-                // кто-то другой уже забрал этого игрока
                 return res.json({
                     status: "searching",
                     waitTime,
@@ -136,12 +123,9 @@ async function start() {
                 });
             }
 
-            // удаляем себя
             await mmRedis.zRem("mm:queue:rating", userId);
             await mmRedis.del(`mm:queue:meta:${userId}`);
             await mmRedis.del(`mm:queue:meta:${opponentId}`);
-
-            // 🔥 ТЕПЕРЬ ТОЧНО У НАС ЕСТЬ ДВА ИГРОКА И ТОЛЬКО ИЗ ОЧЕРЕДИ
 
             const p1 = JSON.parse(await usersRedis.get(`user:${userId}`));
             const p2 = JSON.parse(await usersRedis.get(`user:${opponentId}`));
@@ -173,7 +157,7 @@ async function start() {
             await mmRedis.set(matchId, JSON.stringify(match));
 
             return res.json({
-                status: "matched",
+                status: "waiting_for_game_server",
                 match: {
                     id: matchId,
                     players: [
