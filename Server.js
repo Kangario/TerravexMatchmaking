@@ -72,8 +72,32 @@ async function start() {
 
     app.post("/matchmaking/check", async (req, res) => {
         try {
+            
             const { userId } = req.body;
             if (!userId) return res.status(400).json({ error: "userId is required" });
+
+            // 🔹 0. Проверяем: игрок уже в матче?
+            const existingMatchId = await mmRedis.get(`mm:user:match:${userId}`);
+            if (existingMatchId) {
+                const matchRaw = await mmRedis.get(existingMatchId);
+
+                if (matchRaw) {
+                    const match = JSON.parse(matchRaw);
+
+                    return res.json({
+                        status: "has_match",
+                        match: {
+                            id: match.id,
+                            players: match.players.map(p => ({
+                                userId: p.userId,
+                                username: p.username,
+                            })),
+                        },
+                    });
+                } else {
+                    await mmRedis.del(`mm:user:match:${userId}`);
+                }
+            }
 
             // 1. Уже есть pending соперник?
             const pendingId = await mmRedis.get(`mm:user:pending:${userId}`);
