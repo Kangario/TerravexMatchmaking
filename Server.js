@@ -30,19 +30,14 @@ async function start() {
 
     console.log(" Connected to Users Redis");
     console.log(" Connected to Matchmaking Redis");
-    
+
     app.post("/matchmaking/enqueue", async (req, res) => {
         try {
             const { userId } = req.body;
+            if (!userId) return res.status(400).json({ error: "userId is required" });
 
-            if (!userId) {
-                return res.status(400).json({ error: "userId is required" });
-            }
-            
             const userRaw = await usersRedis.get(`user:${userId}`);
-            if (!userRaw) {
-                return res.status(404).json({ error: "User not found" });
-            }
+            if (!userRaw) return res.status(404).json({ error: "User not found" });
 
             const user = JSON.parse(userRaw);
 
@@ -66,6 +61,7 @@ async function start() {
             ]);
 
             res.json({ status: "queued" });
+
         } catch (err) {
             console.error("Enqueue error:", err);
             res.status(500).json({ error: "Internal server error" });
@@ -73,46 +69,41 @@ async function start() {
     });
 
 
+
     app.post("/matchmaking/check", async (req, res) => {
         try {
             const { userId } = req.body;
+            if (!userId) return res.status(400).json({ error: "userId is required" });
 
-            if (!userId) {
-                return res.status(400).json({ error: "userId is required" });
-            }
+            // 1. Уже есть pending соперник?
+            const pendingId = await mmRedis.get(`mm:user:pending:${userId}`);
+            if (pendingId) {
+                const pendingRaw = await mmRedis.get(pendingId);
+                if (pendingRaw) {
+                    const pending = JSON.parse(pendingRaw);
+                    const opponentId = pending.p1 === userId ? pending.p2 : pending.p1;
 
-            // 🔹 1. Проверяем: игрок УЖЕ в матче?
-            const existingMatchId = await mmRedis.get(`mm:user:match:${userId}`);
-            if (existingMatchId) {
-                const matchRaw = await mmRedis.get(existingMatchId);
-
-                if (matchRaw) {
-                    const match = JSON.parse(matchRaw);
+                    const opponent = JSON.parse(await usersRedis.get(`user:${opponentId}`));
 
                     return res.json({
-                        status: "waiting_for_game_server",
-                        match: {
-                            id: match.id,
-                            players: match.players.map(p => ({
-                                userId: p.userId,
-                                username: p.username,
-                            })),
+                        status: "found",
+                        opponent: {
+                            userId: opponent.userId,
+                            username: opponent.username,
+                            rating: opponent.rating,
+                            level: opponent.level,
                         },
                     });
                 } else {
-                    // если матч удалён, чистим ссылку
-                    await mmRedis.del(`mm:user:match:${userId}`);
+                    await mmRedis.del(`mm:user:pending:${userId}`);
                 }
             }
 
-            // 🔹 2. Проверяем: игрок вообще в очереди?
+            // 2. Проверяем, в очереди ли игрок
             const metaRaw = await mmRedis.get(`mm:queue:meta:${userId}`);
-            if (!metaRaw) {
-                return res.json({ status: "not_in_queue" });
-            }
+            if (!metaRaw) return res.json({ status: "not_in_queue" });
 
             const meta = JSON.parse(metaRaw);
-
             const waitTime = Date.now() - meta.joinedAt;
 
             const step = Math.floor(waitTime / 10000);
@@ -121,7 +112,7 @@ async function start() {
             const minRating = meta.rating - range;
             const maxRating = meta.rating + range;
 
-            // 🔹 3. Ищем кандидатов
+            // 3. Ищем кандидатов
             const candidates = await mmRedis.zRangeByScore(
                 "mm:queue:rating",
                 minRating,
@@ -129,76 +120,32 @@ async function start() {
             );
 
             const opponentId = candidates.find(id => id !== userId);
-
             if (!opponentId) {
-                return res.json({
-                    status: "searching",
-                    waitTime,
-                    range,
-                });
+                return res.json({ status: "searching", waitTime, range });
             }
 
-            // 🔹 4. Пытаемся забрать соперника из очереди
-            const removed = await mmRedis.zRem("mm:queue:rating", opponentId);
+            // 4. Создаём pending pair (30 сек)
+            const pairId = `mm:pending:${Date.now()}:${userId}`;
 
-            if (removed === 0) {
-                // кто-то уже забрал этого соперника
-                return res.json({
-                    status: "searching",
-                    waitTime,
-                    range,
-                });
-            }
-
-            // 🔹 5. Убираем и себя из очереди
-            await mmRedis.zRem("mm:queue:rating", userId);
-            await mmRedis.del(`mm:queue:meta:${userId}`);
-            await mmRedis.del(`mm:queue:meta:${opponentId}`);
-
-            // 🔹 6. Загружаем игроков
-            const p1 = JSON.parse(await usersRedis.get(`user:${userId}`));
-            const p2 = JSON.parse(await usersRedis.get(`user:${opponentId}`));
-
-            const matchId = `mm:match:${Date.now()}`;
-
-            const match = {
-                id: matchId,
-                createdAt: Date.now(),
-                players: [
-                    {
-                        userId: p1.userId,
-                        username: p1.username,
-                        rating: p1.rating,
-                        level: p1.level,
-                        equipmentHeroes: p1.equipmentHeroes,
-                    },
-                    {
-                        userId: p2.userId,
-                        username: p2.username,
-                        rating: p2.rating,
-                        level: p2.level,
-                        equipmentHeroes: p2.equipmentHeroes,
-                    },
-                ],
-                status: "waiting_for_game_server",
+            const pending = {
+                p1: userId,
+                p2: opponentId,
+                accepted: [],
             };
 
-            // 🔹 7. Сохраняем матч
-            await mmRedis.set(matchId, JSON.stringify(match), { EX: 300 });
+            await mmRedis.set(pairId, JSON.stringify(pending), { EX: 30 });
+            await mmRedis.set(`mm:user:pending:${userId}`, pairId, { EX: 30 });
+            await mmRedis.set(`mm:user:pending:${opponentId}`, pairId, { EX: 30 });
 
-            // 🔹 8. Привязываем ОБОИХ игроков к матчу
-            await mmRedis.set(`mm:user:match:${userId}`, matchId, { EX: 300 });
-            await mmRedis.set(`mm:user:match:${opponentId}`, matchId, { EX: 300 });
+            const opponent = JSON.parse(await usersRedis.get(`user:${opponentId}`));
 
-            // 🔹 9. Возвращаем матч ТЕКУЩЕМУ игроку
             return res.json({
-                status: "waiting_for_game_server",
-                match: {
-                    id: matchId,
-                    players: [
-                        { userId: p1.userId, username: p1.username },
-                        { userId: p2.userId, username: p2.username },
-                    ],
+                status: "found",
+                opponent: {
+                    userId: opponent.userId,
+                    username: opponent.username,
+                    rating: opponent.rating,
+                    level: opponent.level,
                 },
             });
 
@@ -207,6 +154,96 @@ async function start() {
             res.status(500).json({ error: "Internal server error" });
         }
     });
+
+    app.post("/matchmaking/accept", async (req, res) => {
+        try {
+            const { userId } = req.body;
+            if (!userId) return res.status(400).json({ error: "userId is required" });
+
+            const pairId = await mmRedis.get(`mm:user:pending:${userId}`);
+            if (!pairId) {
+                return res.json({ status: "no_pending" });
+            }
+
+            const pendingRaw = await mmRedis.get(pairId);
+            if (!pendingRaw) {
+                await mmRedis.del(`mm:user:pending:${userId}`);
+                return res.json({ status: "expired" });
+            }
+
+            const pending = JSON.parse(pendingRaw);
+
+            if (!pending.accepted.includes(userId)) {
+                pending.accepted.push(userId);
+                await mmRedis.set(pairId, JSON.stringify(pending), { EX: 30 });
+            }
+
+            // если ещё не оба приняли
+            if (pending.accepted.length < 2) {
+                return res.json({ status: "waiting_other" });
+            }
+
+            // 🔹 ОБА ПРИНЯЛИ → создаём матч
+            const { p1, p2 } = pending;
+
+            // убираем из очереди
+            await mmRedis.zRem("mm:queue:rating", p1);
+            await mmRedis.zRem("mm:queue:rating", p2);
+            await mmRedis.del(`mm:queue:meta:${p1}`);
+            await mmRedis.del(`mm:queue:meta:${p2}`);
+
+            // чистим pending
+            await mmRedis.del(pairId);
+            await mmRedis.del(`mm:user:pending:${p1}`);
+            await mmRedis.del(`mm:user:pending:${p2}`);
+
+            // загружаем игроков
+            const u1 = JSON.parse(await usersRedis.get(`user:${p1}`));
+            const u2 = JSON.parse(await usersRedis.get(`user:${p2}`));
+
+            const matchId = `mm:match:${Date.now()}`;
+
+            const match = {
+                id: matchId,
+                createdAt: Date.now(),
+                players: [
+                    {
+                        userId: u1.userId,
+                        username: u1.username,
+                        rating: u1.rating,
+                        level: u1.level,
+                    },
+                    {
+                        userId: u2.userId,
+                        username: u2.username,
+                        rating: u2.rating,
+                        level: u2.level,
+                    },
+                ],
+                status: "waiting_for_game_server",
+            };
+
+            await mmRedis.set(matchId, JSON.stringify(match), { EX: 300 });
+            await mmRedis.set(`mm:user:match:${p1}`, matchId, { EX: 300 });
+            await mmRedis.set(`mm:user:match:${p2}`, matchId, { EX: 300 });
+
+            return res.json({
+                status: "match_created",
+                match: {
+                    id: matchId,
+                    players: [
+                        { userId: u1.userId, username: u1.username },
+                        { userId: u2.userId, username: u2.username },
+                    ],
+                },
+            });
+
+        } catch (err) {
+            console.error("Accept error:", err);
+            res.status(500).json({ error: "Internal server error" });
+        }
+    });
+
 
 
     const PORT = process.env.PORT || 3000;
