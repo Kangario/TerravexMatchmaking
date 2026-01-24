@@ -17,10 +17,41 @@ const mmRedis = createClient({
     socket: { host: "redis-16482.c328.europe-west3-1.gce.cloud.redislabs.com", port: 16482 },
 });
 
+const gsRedis = createClient({
+    username: 'default',
+    password: 'o0EjuPkv0vCmo25LodqPxQMBvKDjzMpD',
+    socket: {
+        host: 'redis-16597.c328.europe-west3-1.gce.cloud.redislabs.com',
+        port: 16597
+    }
+});
+
+gsRedis.on('error', err => console.log('Redis Client Error', err));
 usersRedis.on("error", err => console.error("Users Redis error:", err));
 mmRedis.on("error", err => console.error("MM Redis error:", err));
 
 /* ---------------- HELPERS ---------------- */
+
+// записать матч в GameServerRedis
+async function saveMatchToGameServer(match) {
+    const key = `gs:match:${match.id}`;
+
+    const gsMatch = {
+        id: match.id,
+        createdAt: match.createdAt,
+        players: match.players,
+        status: "waiting_for_server",   // ждёт, пока GameServer подхватит
+    };
+
+    // основной объект матча
+    await gsRedis.set(key, JSON.stringify(gsMatch), { EX: 600 }); // 10 минут
+
+    // очередь матчей для GameServer (очень полезно)
+    await gsRedis.lPush("gs:queue:matches", match.id);
+
+    console.log("🎮 Match saved to GameServerRedis:", match.id);
+}
+
 
 // получить пользователя
 async function getUser(userId) {
@@ -52,14 +83,17 @@ async function checkExistingMatch(userId) {
     const matchId = await mmRedis.get(`mm:user:match:${userId}`);
     if (!matchId) return null;
 
-    const raw = await mmRedis.get(matchId);
+    // 🔹 ЧИТАЕМ МАТЧ УЖЕ ИЗ GameServerRedis
+    const raw = await gsRedis.get(`gs:match:${matchId}`);
     if (!raw) {
+        // матч пропал — чистим ссылку
         await mmRedis.del(`mm:user:match:${userId}`);
         return null;
     }
 
     return JSON.parse(raw);
 }
+
 
 // поиск соперника
 async function findOpponent(userId) {
@@ -150,11 +184,18 @@ async function acceptPair(userId) {
         status: "waiting_for_game_server",
     };
 
-    await mmRedis.set(matchId, JSON.stringify(match), { EX: 300 });
+    // сохраняем в mmRedis (только чтобы клиенты узнали, что матч есть)
     await mmRedis.set(`mm:user:match:${p1}`, matchId, { EX: 300 });
     await mmRedis.set(`mm:user:match:${p2}`, matchId, { EX: 300 });
 
+// 🔹 СОХРАНЯЕМ МАТЧ В GameServerRedis
+    await saveMatchToGameServer(match);
+
+// (опционально) можно вообще НЕ хранить сам матч в mmRedis
+// mmRedis теперь используется только как сигнал "матч создан"
+
     return { status: "match_created", match };
+
 }
 
 /* ---------------- ENDPOINTS ---------------- */
@@ -257,14 +298,17 @@ app.post("/matchmaking/match", async (req, res) => {
 async function start() {
     await usersRedis.connect();
     await mmRedis.connect();
+    await gsRedis.connect();   // 🔹 ВАЖНО
 
     console.log(" Connected to Users Redis");
     console.log(" Connected to Matchmaking Redis");
+    console.log(" Connected to GameServer Redis");  // 🔹
 
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => {
         console.log(`🚀 Matchmaking server running on port ${PORT}`);
     });
 }
+
 
 start();
