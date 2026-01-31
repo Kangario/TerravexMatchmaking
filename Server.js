@@ -35,12 +35,14 @@ mmRedis.on("error", err => console.error("MM Redis error:", err));
 // записать матч в GameServerRedis
 async function saveMatchToGameServer(match) {
     const key = `gs:match:${match.id}`;
-
+    const crypto = require("node:crypto");
+    
     const gsMatch = {
         id: match.id,
         createdAt: match.createdAt,
         players: match.players,
-        status: "waiting_for_server",   // ждёт, пока GameServer подхватит
+        status: "waiting_for_server", // ждёт, пока GameServer подхватит
+        seed: crypto.randomInt(0, 2 ** 31)
     };
 
     // основной объект матча
@@ -127,7 +129,7 @@ async function createPendingPair(p1, p2) {
         p2,
         accepted: [],
     };
-
+ 
     await mmRedis.set(pairId, JSON.stringify(pending), { EX: 30 });
     await mmRedis.set(`mm:user:pending:${p1}`, pairId, { EX: 30 });
     await mmRedis.set(`mm:user:pending:${p2}`, pairId, { EX: 30 });
