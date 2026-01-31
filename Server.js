@@ -33,27 +33,91 @@ mmRedis.on("error", err => console.error("MM Redis error:", err));
 /* ---------------- HELPERS ---------------- */
 
 // записать матч в GameServerRedis
+const crypto = require("node:crypto");
+
 async function saveMatchToGameServer(match) {
     const key = `gs:match:${match.id}`;
-    const crypto = require("node:crypto");
-    
+
+    const unitsByPlayer = {};
+
+    for (const p of match.players) {
+        const heroes = await getUserUnits(p.userId);
+        unitsByPlayer[p.userId] = normalizeHeroes(heroes);
+    }
+
     const gsMatch = {
         id: match.id,
         createdAt: match.createdAt,
         players: match.players,
-        status: "waiting_for_server", // ждёт, пока GameServer подхватит
-        seed: crypto.randomInt(0, 2 ** 31)
+        status: "waiting_for_server",
+        seed: crypto.randomInt(0, 2 ** 31),
+        units: unitsByPlayer
     };
 
-    // основной объект матча
-    await gsRedis.set(key, JSON.stringify(gsMatch), { EX: 600 }); // 10 минут
+    await gsRedis.set(key, JSON.stringify(gsMatch), { EX: 3600 }); // лучше 1 час
 
-    // очередь матчей для GameServer (очень полезно)
     await gsRedis.lPush("gs:queue:matches", match.id);
 
-    console.log("🎮 Match saved to GameServerRedis:", match.id);
+    console.log("🎮 Match saved to GS", {
+        matchId: match.id,
+        seed: gsMatch.seed,
+        p1Units: unitsByPlayer[match.players[0].userId].length,
+        p2Units: unitsByPlayer[match.players[1].userId].length
+    });
 }
 
+
+async function getUserUnits(userId) {
+    const raw = await usersRedis.get(`user:${userId}`);
+
+    if (!raw) {
+        throw new Error(`User ${userId} not found`);
+    }
+
+    const user = JSON.parse(raw);
+
+    if (!user.equipmentHeroes || !Array.isArray(user.equipmentHeroes)) {
+        throw new Error(`User ${userId} has no equipmentHeroes`);
+    }
+
+    console.log("👥 Units loaded", {
+        userId,
+        count: user.equipmentHeroes.length
+    });
+
+    return user.equipmentHeroes;
+}
+
+
+function normalizeHeroes(equipmentHeroes, ownerId) {
+    return equipmentHeroes.map((h, index) => ({
+
+        
+        battleUnitId: `${ownerId}_${index}`,
+        heroId: h.Id,
+        templateId: h.InstanceId,
+        
+        ownerId,
+        
+        name: h.Name,
+        class: h.TypeClass,
+        
+        hp: h.Hp,
+        maxHp: h.Hp,
+        
+        damageP: h.DamageP,
+        damageM: h.DamageM,
+        
+        defenceP: h.DefenceP,
+        defenceM: h.DefenceM,
+        
+        speed: h.Speed,
+        attackSpeed: h.AttackSpeed,
+        
+        level: h.Lvl,
+
+    }));
+}
 
 // получить пользователя
 async function getUser(userId) {
