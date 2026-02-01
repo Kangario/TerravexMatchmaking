@@ -38,11 +38,11 @@ const crypto = require("node:crypto");
 async function saveMatchToGameServer(match) {
     const key = `gs:match:${match.id}`;
 
-    const unitsByPlayer = {};
+    const unitsByPlayer = [];
 
     for (const p of match.players) {
         const heroes = await getUserUnits(p.userId);
-        unitsByPlayer[p.userId] = normalizeHeroes(heroes);
+        unitsByPlayer.push(...normalizeHeroes(heroes, p.userId));
     }
 
     const gsMatch = {
@@ -93,7 +93,7 @@ function normalizeHeroes(equipmentHeroes, ownerId) {
     return equipmentHeroes.map((h, index) => ({
 
         
-        battleUnitId: `${ownerId}_${index}`,
+        battleUnitId: `${index}`,
         heroId: h.Id,
         templateId: h.InstanceId,
         
