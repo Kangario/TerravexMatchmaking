@@ -40,9 +40,12 @@ async function saveMatchToGameServer(match) {
 
     const unitsByPlayer = [];
 
+    let teamId = 0;
+    
     for (const p of match.players) {
         const heroes = await getUserUnits(p.userId);
-        unitsByPlayer.push(...normalizeHeroes(heroes, p.userId));
+        unitsByPlayer.push(...normalizeHeroes(heroes, p.userId, teamId));
+        teamId++;
     }
 
     const gsMatch = {
@@ -89,11 +92,24 @@ async function getUserUnits(userId) {
 }
 
 
-function normalizeHeroes(equipmentHeroes, ownerId) {
+function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
     return equipmentHeroes.map((h, index) => ({
+/*id: c.id,
+            team: c.team,
+            stats: {
+                hp: c.hp,
+                ap: c.ap,
+                initiative: c.initiative,
+                attack: c.attack,
+                defense: c.defense
+            },
+            position: {
+                x: c.spawnX,
+                y: c.spawnY
+            }*/
 
-        
-        battleUnitId: `${index}`,
+        id: `${index}`,
+        team: teamId,
         heroId: h.Id,
         templateId: h.InstanceId,
         
@@ -105,6 +121,10 @@ function normalizeHeroes(equipmentHeroes, ownerId) {
         hp: h.Hp,
         maxHp: h.Hp,
         
+        ap: 6,
+
+        initiative: Math.floor(Math.random()*10),
+        
         damageP: h.DamageP,
         damageM: h.DamageM,
         
@@ -115,7 +135,11 @@ function normalizeHeroes(equipmentHeroes, ownerId) {
         attackSpeed: h.AttackSpeed,
         
         level: h.Lvl,
-
+        
+        position: {
+            x: 0,
+            y: 0
+        }
     }));
 }
 
