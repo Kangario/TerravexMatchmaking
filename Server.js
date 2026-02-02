@@ -94,26 +94,13 @@ async function getUserUnits(userId) {
 
 function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
     return equipmentHeroes.map((h, index) => ({
-/*id: c.id,
-            team: c.team,
-            stats: {
-                hp: c.hp,
-                ap: c.ap,
-                initiative: c.initiative,
-                attack: c.attack,
-                defense: c.defense
-            },
-            position: {
-                x: c.spawnX,
-                y: c.spawnY
-            }*/
 
         id: `${index}`,
         team: teamId,
         heroId: h.Id,
         templateId: h.InstanceId,
         
-        ownerId,
+        playerId: ownerId,
         
         name: h.Name,
         class: h.TypeClass,
