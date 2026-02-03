@@ -90,44 +90,69 @@ async function getUserUnits(userId) {
 
     return user.equipmentHeroes;
 }
+//Position helper
+const FIELD_WIDTH = 15;
+const FIELD_HEIGHT = 40;
 
+function getRandomPositionByTeam(teamId) {
+    const margin = 1; // чтобы не прилипали к краям
+
+    let minX, maxX;
+
+    if (teamId === 0) {
+        minX = 0 + margin;
+        maxX = Math.floor(FIELD_WIDTH / 4); // левая четверть
+    } else {
+        minX = FIELD_WIDTH - Math.floor(FIELD_WIDTH / 4);
+        maxX = FIELD_WIDTH - margin;
+    }
+
+    return {
+        x: getRandomInt(minX, maxX),
+        y: getRandomInt(margin, FIELD_HEIGHT - margin),
+    };
+}
+
+function getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 
 function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
-    return equipmentHeroes.map((h, index) => ({
+    return equipmentHeroes.map((h, index) => {
 
-        id: `${index}`,
-        team: teamId,
-        heroId: h.Id,
-        templateId: h.InstanceId,
-        
-        playerId: ownerId,
-        
-        name: h.Name,
-        class: h.TypeClass,
-        
-        hp: h.Hp,
-        maxHp: h.Hp,
-        
-        ap: 6,
+        const position = getRandomPositionByTeam(teamId);
 
-        initiative: Math.floor(Math.random()*10),
-        
-        damageP: h.DamageP,
-        damageM: h.DamageM,
-        
-        defenceP: h.DefenceP,
-        defenceM: h.DefenceM,
-        
-        speed: h.Speed,
-        attackSpeed: h.AttackSpeed,
-        
-        level: h.Lvl,
-        
-        position: {
-            x: 0,
-            y: 0
-        }
-    }));
+        return {
+            id: `${ownerId}_${index}`, // ⚠️ лучше уникальный id
+            team: teamId,
+
+            heroId: h.Id,
+            templateId: h.InstanceId,
+            playerId: ownerId,
+
+            name: h.Name,
+            class: h.TypeClass,
+
+            hp: h.Hp,
+            maxHp: h.Hp,
+            ap: 6,
+
+            initiative: Math.floor(Math.random() * 10),
+
+            damageP: h.DamageP,
+            damageM: h.DamageM,
+
+            defenceP: h.DefenceP,
+            defenceM: h.DefenceM,
+
+            speed: h.Speed,
+            attackSpeed: h.AttackSpeed,
+
+            level: h.Lvl,
+
+            position
+        };
+    });
 }
 
 // получить пользователя
