@@ -280,8 +280,8 @@ async function acceptPair(userId) {
         id: matchId,
         createdAt: Date.now(),
         players: [
-            { userId: u1.userId, username: u1.username, rating: u1.rating, level: u1.level },
-            { userId: u2.userId, username: u2.username, rating: u2.rating, level: u2.level },
+            { userId: u1.userId, username: u1.username, rating: u1.rating, level: u1.level , teamId: 0},
+            { userId: u2.userId, username: u2.username, rating: u2.rating, level: u2.level , teamId: 1},
         ],
         status: "waiting_for_game_server",
     };
