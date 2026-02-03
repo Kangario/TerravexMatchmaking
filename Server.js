@@ -109,7 +109,7 @@ function getRandomPositionByTeam(teamId) {
 
     return {
         x: getRandomInt(minX, maxX),
-        y: getRandomInt(margin, FIELD_HEIGHT - margin),
+        y: getRandomInt(FIELD_HEIGHT-3, FIELD_HEIGHT - margin),
     };
 }
 
