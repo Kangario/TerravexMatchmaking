@@ -95,21 +95,23 @@ const FIELD_WIDTH = 15;
 const FIELD_HEIGHT = 40;
 
 function getRandomPositionByTeam(teamId) {
-    const margin = 1; // чтобы не прилипали к краям
+    const margin = 1;
 
-    let minX, maxX;
+    let minY, maxY;
 
     if (teamId === 0) {
-        minX = 0 + margin;
-        maxX = Math.floor(FIELD_WIDTH / 4); // левая четверть
+        // верхняя половина
+        minY = 0 + margin;
+        maxY = Math.floor(FIELD_HEIGHT / 8) - margin;
     } else {
-        minX = FIELD_WIDTH - Math.floor(FIELD_WIDTH / 4);
-        maxX = FIELD_WIDTH - margin;
+        // нижняя половина
+        minY = Math.floor(FIELD_HEIGHT / 8) + margin;
+        maxY = FIELD_HEIGHT - margin;
     }
 
     return {
-        x: getRandomInt(minX, maxX),
-        y: getRandomInt(FIELD_HEIGHT-3, FIELD_HEIGHT - margin),
+        x: getRandomInt(margin, FIELD_WIDTH - margin),
+        y: getRandomInt(minY, maxY),
     };
 }
 
