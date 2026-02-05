@@ -101,12 +101,12 @@ function getRandomPositionByTeam(teamId) {
 
     if (teamId === 0) {
         // верхняя половина
-        minY = 1;
-        maxY = 2;
+        minY = 2;
+        maxY = 3;
     } else {
         // нижняя половина
-        minY = 37;
-        maxY = 38;
+        minY = 38;
+        maxY = 39;
     }
 
     return {
