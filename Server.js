@@ -123,7 +123,7 @@ function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
     return equipmentHeroes.map((h, index) => {
 
         const position = getRandomPositionByTeam(teamId);
-
+        console.log("[normalizeHeroes] position: ", position);
         return {
             id: `${ownerId}_${index}`, // ⚠️ лучше уникальный id
             team: teamId,
