@@ -95,18 +95,18 @@ const FIELD_WIDTH = 15;
 const FIELD_HEIGHT = 40;
 
 function getRandomPositionByTeam(teamId) {
-    const margin = 1;
+    const margin = 4;
 
     let minY, maxY;
 
     if (teamId === 0) {
         // верхняя половина
-        minY = 0 + margin;
-        maxY = Math.floor(FIELD_HEIGHT / 20) + 1 - margin;
+        minY = 1;
+        maxY = 2;
     } else {
         // нижняя половина
-        minY = Math.floor(FIELD_HEIGHT - 3) + margin;
-        maxY = FIELD_HEIGHT - margin;
+        minY = 37;
+        maxY = 38;
     }
 
     return {
