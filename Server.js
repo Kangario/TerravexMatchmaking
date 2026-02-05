@@ -105,7 +105,7 @@ function getRandomPositionByTeam(teamId) {
         maxY = Math.floor(FIELD_HEIGHT / 20) - margin;
     } else {
         // нижняя половина
-        minY = Math.floor(FIELD_HEIGHT / 20) + margin;
+        minY = Math.floor(FIELD_HEIGHT - 3) + margin;
         maxY = FIELD_HEIGHT - margin;
     }
 
