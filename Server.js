@@ -100,7 +100,7 @@ function getRandomPositionByTeam(teamId) {
     let minY, maxY;
 
     if (teamId === 0) {
-        minY = 0;
+        minY = 2;
         maxY = 2;
     } else {
         minY = 39;
