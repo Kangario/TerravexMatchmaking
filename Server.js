@@ -119,12 +119,21 @@ function getRandomInt(min, max) {
 }
 
 function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
+    const usedPositions = new Set();
+
     return equipmentHeroes.map((h, index) => {
 
-        const position = getRandomPositionByTeam(teamId);
-        console.log("[normalizeHeroes] position: ", position);
+        let position;
+
+        do {
+            position = getRandomPositionByTeam(teamId);
+        }
+        while (usedPositions.has(`${position.x}_${position.y}`));
+
+        usedPositions.add(`${position.x}_${position.y}`);
+
         return {
-            id: `${ownerId}_${index}`, // ⚠️ лучше уникальный id
+            id: `${ownerId}_${index}`,
             team: teamId,
 
             heroId: h.Id,
