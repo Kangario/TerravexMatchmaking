@@ -141,13 +141,13 @@ function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
             playerId: ownerId,
 
             name: h.Name,
-            class: h.TypeClass,
+            gender: h.Gender,
 
-            hp: h.Hp,
-            maxHp: h.Hp,
-            ap: 6,
+            hp: h.HpMax,
+            maxHp: h.HpMax,
+            ap: h.MaxAP,
 
-            initiative: Math.floor(Math.random() * 10),
+            initiative: h.Initiative,
 
             damageP: h.DamageP,
             damageM: h.DamageM,
@@ -155,11 +155,14 @@ function normalizeHeroes(equipmentHeroes, ownerId, teamId) {
             defenceP: h.DefenceP,
             defenceM: h.DefenceM,
 
-            speed: h.Speed,
-            attackSpeed: h.AttackSpeed,
-
+            attackRange: h.AttackRange,
+            moveCost: h.MoveCost,
+            
             level: h.Lvl,
-
+            
+            skills: h.Skills,
+            equipmentSlots: h.EquipmentSlots,
+            
             position
         };
     });
@@ -230,21 +233,29 @@ async function findOpponent(userId) {
     return candidates.find(id => id !== userId) || null;
 }
 
-// создать pending пару
 async function createPendingPair(p1, p2) {
-    const pairId = `mm:pending:${Date.now()}:${p1}`;
+    const pairKey = `mm:pair:${[p1, p2].sort().join(":")}`;
 
     const pending = {
         p1,
         p2,
         accepted: [],
     };
- 
-    await mmRedis.set(pairId, JSON.stringify(pending), { EX: 30 });
-    await mmRedis.set(`mm:user:pending:${p1}`, pairId, { EX: 30 });
-    await mmRedis.set(`mm:user:pending:${p2}`, pairId, { EX: 30 });
+    
+    const created = await mmRedis.set(
+        pairKey,
+        JSON.stringify(pending),
+        { NX: true, EX: 30 }
+    );
+    
+    if (created === null) {
+        return pairKey;
+    }
+    
+    await mmRedis.set(`mm:user:pending:${p1}`, pairKey, { EX: 30 });
+    await mmRedis.set(`mm:user:pending:${p2}`, pairKey, { EX: 30 });
 
-    return pairId;
+    return pairKey;
 }
 
 // принять pending и возможно создать матч
