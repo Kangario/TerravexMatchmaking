@@ -415,6 +415,47 @@ app.post("/matchmaking/match", async (req, res) => {
     }
 });
 
+app.post("/matchmaking/dequeue", async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) {
+            return res.status(400).json({ error: "userId is required" });
+        }
+
+        // 1) Удаляем из рейтинговой очереди и меты
+        const removedFromQueue = await mmRedis.zRem("mm:queue:rating", userId);
+        await mmRedis.del(`mm:queue:meta:${userId}`);
+
+        // 2) Если был в pending-паре — чистим пару и второго игрока
+        const pendingKey = await mmRedis.get(`mm:user:pending:${userId}`);
+        if (pendingKey) {
+            const pendingRaw = await mmRedis.get(pendingKey);
+
+            if (pendingRaw) {
+                const pending = JSON.parse(pendingRaw);
+                const opponentId = pending.p1 === userId ? pending.p2 : pending.p1;
+
+                await mmRedis.del(`mm:user:pending:${opponentId}`);
+            }
+
+            await mmRedis.del(pendingKey);
+            await mmRedis.del(`mm:user:pending:${userId}`);
+        }
+
+        // 3) Ссылку на матч у этого пользователя тоже убираем
+        await mmRedis.del(`mm:user:match:${userId}`);
+
+        return res.json({
+            status: "dequeued",
+            removedFromQueue: removedFromQueue > 0
+        });
+    } catch (err) {
+        console.error("Dequeue error:", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
 
 /* ---------------- START ---------------- */
 
