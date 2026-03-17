@@ -187,7 +187,7 @@ async function enqueueUser(userId, rating) {
     }));
 
     await mmRedis.zAdd("mm:queue:rating", [
-        { score: rating, value: userId },
+        { score: now, value: userId },
     ]);
 
     return true;
@@ -210,87 +210,17 @@ async function checkExistingMatch(userId) {
 }
 
 
-// поиск соперника
+// поиск первого доступного соперника без учета рейтинга
 async function findOpponent(userId) {
-    const metaRaw = await mmRedis.get(`mm:queue:meta:${userId}`);
-    if (!metaRaw) return null;
-
-    const meta = JSON.parse(metaRaw);
-    const waitTime = Date.now() - meta.joinedAt;
-
-    const step = Math.floor(waitTime / 10000);
-    const range = Math.min(step * 100, 1000);
-
-    const minRating = meta.rating - range;
-    const maxRating = meta.rating + range;
-
-    const candidates = await mmRedis.zRangeByScore(
-        "mm:queue:rating",
-        minRating,
-        maxRating
-    );
-
+    const candidates = await mmRedis.zRange("mm:queue:rating", 0, -1);
     return candidates.find(id => id !== userId) || null;
 }
 
-async function createPendingPair(p1, p2) {
-    const pairKey = `mm:pair:${[p1, p2].sort().join(":")}`;
-
-    const pending = {
-        p1,
-        p2,
-        accepted: [],
-    };
-    
-    const created = await mmRedis.set(
-        pairKey,
-        JSON.stringify(pending),
-        { NX: true, EX: 30 }
-    );
-    
-    if (created === null) {
-        return pairKey;
-    }
-    
-    await mmRedis.set(`mm:user:pending:${p1}`, pairKey, { EX: 30 });
-    await mmRedis.set(`mm:user:pending:${p2}`, pairKey, { EX: 30 });
-
-    return pairKey;
-}
-
-// принять pending и возможно создать матч
-async function acceptPair(userId) {
-    const pairId = await mmRedis.get(`mm:user:pending:${userId}`);
-    if (!pairId) return { status: "no_pending" };
-
-    const raw = await mmRedis.get(pairId);
-    if (!raw) {
-        await mmRedis.del(`mm:user:pending:${userId}`);
-        return { status: "expired" };
-    }
-
-    const pending = JSON.parse(raw);
-
-    if (!pending.accepted.includes(userId)) {
-        pending.accepted.push(userId);
-        await mmRedis.set(pairId, JSON.stringify(pending), { EX: 30 });
-    }
-
-    if (pending.accepted.length < 2) {
-        return { status: "waiting_other" };
-    }
-
-    // оба приняли → создаём матч
-    const { p1, p2 } = pending;
-
+async function createMatchForPlayers(p1, p2) {
     await mmRedis.zRem("mm:queue:rating", p1);
     await mmRedis.zRem("mm:queue:rating", p2);
     await mmRedis.del(`mm:queue:meta:${p1}`);
     await mmRedis.del(`mm:queue:meta:${p2}`);
-
-    await mmRedis.del(pairId);
-    await mmRedis.del(`mm:user:pending:${p1}`);
-    await mmRedis.del(`mm:user:pending:${p2}`);
 
     const u1 = await getUser(p1);
     const u2 = await getUser(p2);
@@ -317,8 +247,31 @@ async function acceptPair(userId) {
 // (опционально) можно вообще НЕ хранить сам матч в mmRedis
 // mmRedis теперь используется только как сигнал "матч создан"
 
-    return { status: "match_created", match };
+    return match;
+}
 
+async function tryCreateMatch(userId, opponentId) {
+    const lockKey = `mm:matchlock:${[userId, opponentId].sort().join(":")}`;
+    const locked = await mmRedis.set(lockKey, userId, { NX: true, EX: 5 });
+
+    if (locked === null) {
+        return checkExistingMatch(userId);
+    }
+
+    try {
+        const [userStillQueued, opponentStillQueued] = await Promise.all([
+            mmRedis.zScore("mm:queue:rating", userId),
+            mmRedis.zScore("mm:queue:rating", opponentId),
+        ]);
+
+        if (userStillQueued === null || opponentStillQueued === null) {
+            return checkExistingMatch(userId);
+        }
+
+        return await createMatchForPlayers(userId, opponentId);
+    } finally {
+        await mmRedis.del(lockKey);
+    }
 }
 
 /* ---------------- ENDPOINTS ---------------- */
@@ -349,13 +302,9 @@ app.post("/matchmaking/check", async (req, res) => {
         const { userId } = req.body;
         if (!userId) return res.status(400).json({ error: "userId is required" });
 
-        // если уже есть pending
-        const pendingId = await mmRedis.get(`mm:user:pending:${userId}`);
-        if (pendingId) {
-            const pending = JSON.parse(await mmRedis.get(pendingId));
-            const opponentId = pending.p1 === userId ? pending.p2 : pending.p1;
-            const opponent = await getUser(opponentId);
-
+        const existing = await checkExistingMatch(userId);
+        if (existing) {
+            const opponent = existing.players.find(player => player.userId !== userId);
             return res.json({
                 status: "found",
                 opponent: {
@@ -372,9 +321,12 @@ app.post("/matchmaking/check", async (req, res) => {
             return res.json({ status: "searching" });
         }
 
-        await createPendingPair(userId, opponentId);
+        const match = await tryCreateMatch(userId, opponentId);
+        if (!match) {
+            return res.json({ status: "searching" });
+        }
 
-        const opponent = await getUser(opponentId);
+        const opponent = match.players.find(player => player.userId !== userId);
 
         return res.json({
             status: "found",
@@ -393,7 +345,7 @@ app.post("/matchmaking/check", async (req, res) => {
 });
 
 
-// 3️⃣ ПРОВЕРКА СУЩЕСТВУЮЩЕГО МАТЧА + ACCEPT
+// 3️⃣ ПРОВЕРКА СУЩЕСТВУЮЩЕГО МАТЧА
 app.post("/matchmaking/match", async (req, res) => {
     try {
         const { userId } = req.body;
@@ -405,9 +357,7 @@ app.post("/matchmaking/match", async (req, res) => {
             return res.json({ status: "has_match", match: existing });
         }
 
-        // иначе пробуем принять pending
-        const result = await acceptPair(userId);
-        return res.json(result);
+        return res.json({ status: "searching" });
 
     } catch (err) {
         console.error("Match error:", err);
@@ -426,23 +376,7 @@ app.post("/matchmaking/dequeue", async (req, res) => {
         const removedFromQueue = await mmRedis.zRem("mm:queue:rating", userId);
         await mmRedis.del(`mm:queue:meta:${userId}`);
 
-        // 2) Если был в pending-паре — чистим пару и второго игрока
-        const pendingKey = await mmRedis.get(`mm:user:pending:${userId}`);
-        if (pendingKey) {
-            const pendingRaw = await mmRedis.get(pendingKey);
-
-            if (pendingRaw) {
-                const pending = JSON.parse(pendingRaw);
-                const opponentId = pending.p1 === userId ? pending.p2 : pending.p1;
-
-                await mmRedis.del(`mm:user:pending:${opponentId}`);
-            }
-
-            await mmRedis.del(pendingKey);
-            await mmRedis.del(`mm:user:pending:${userId}`);
-        }
-
-        // 3) Ссылку на матч у этого пользователя тоже убираем
+        // 2) Ссылку на матч у этого пользователя тоже убираем
         await mmRedis.del(`mm:user:match:${userId}`);
 
         return res.json({
