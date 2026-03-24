@@ -71,8 +71,20 @@ class GameServerService {
 
     normalizeHeroes(equipmentHeroes, ownerId, teamId) {
         const usedPositions = new Set();
+        const seenInstanceIds = new Set();
 
         return equipmentHeroes.map((hero, index) => {
+            if (seenInstanceIds.has(hero.InstanceId)) {
+                console.warn("Duplicate hero InstanceId detected while preparing match", {
+                    ownerId,
+                    teamId,
+                    instanceId: hero.InstanceId,
+                    heroTemplateId: hero.Id,
+                });
+            }
+
+            seenInstanceIds.add(hero.InstanceId);
+
             let position;
 
             do {
@@ -84,8 +96,8 @@ class GameServerService {
             return {
                 id: `${ownerId}_${index}`,
                 team: teamId,
-                heroId: hero.Id,
-                templateId: hero.InstanceId,
+                heroId: hero.InstanceId,
+                templateId: hero.Id,
                 playerId: ownerId,
                 name: hero.Name,
                 gender: hero.Gender,
